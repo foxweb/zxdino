@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Пересоздаёт build.py
+sprites.inc
+dino.bin
+dino.lab
+
+# Кадры эмулятора
+preview/
+
+# Собирается из tools/runspec.c
+tools/runspec
