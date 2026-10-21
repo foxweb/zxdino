@@ -2,6 +2,8 @@
 
 A dinosaur runner in the style of the Chrome offline game, for the ZX Spectrum 48K. The game is Z80 assembly. Sprites are ASCII pictures in `art.py`.
 
+![ZX Dino screen](./zx-dino-screen.png)
+
 ## Play
 
 Open `dino.tap` or `dino.z80` in a 48K emulator. The same files are used on macOS, Linux, and Windows.

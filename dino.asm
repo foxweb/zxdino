@@ -503,6 +503,7 @@ us_loop:
         or l
         jr z, us_wrap
         call bump_score_digits
+        call maybe_ding
         jr us_next
 us_wrap:
         call zero_score_dig
@@ -546,6 +547,25 @@ zsd_loop:
         inc hl
         djnz zsd_loop
         ret
+
+; Один раз за забег, когда счёт строго больше уже существующего HI.
+maybe_ding:
+        ld a, (hi_chime)
+        or a
+        ret nz
+        ld hl, (hi_score)
+        ld a, h
+        or l
+        ret z
+        ex de, hl
+        ld hl, (score)
+        or a
+        sbc hl, de
+        ret z
+        ret c
+        ld a, 1
+        ld (hi_chime), a
+        jp ding_snd
 
 update_speed:
         ld a, (score+1)
@@ -797,6 +817,33 @@ rnd_core:
         ld (seed), hl
         ld a, l
         pop bc
+        ret
+
+; Дин-дон: короткая высокая нота, затем короткая более низкая.
+ding_snd:
+        ld c, 50
+        ld b, 60
+        call dn_note
+        ld c, 85
+        ld b, 45
+        jp dn_note
+
+dn_note:
+dn_loop:
+        ld a, (border_col)
+        or $10
+        out ($FE), a
+        ld a, c
+dn_d1:
+        dec a
+        jr nz, dn_d1
+        ld a, (border_col)
+        out ($FE), a
+        ld a, c
+dn_d2:
+        dec a
+        jr nz, dn_d2
+        djnz dn_loop
         ret
 
 jump_snd:
@@ -1913,6 +1960,7 @@ init_round:
         ld (grav_phase), a
         ld (score_from), a
         ld (hi_from), a
+        ld (hi_chime), a
         ld hl, score_dig
         ld b, 5
 ir_dig:
@@ -1997,6 +2045,7 @@ score_from:  db 0
 hi_score:    dw 0
 hi_dig:      ds 5
 hi_from:     db 0
+hi_chime:    db 0
 attr_dirty:  db 1
 saved_sp:    dw 0
 spawn_t:     db 0
