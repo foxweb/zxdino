@@ -12,6 +12,7 @@ GROUND_Y:    equ 168
 DINO_H:      equ 18
 DINO_Y0:     equ 150
 DINO_X:      equ 32
+DINO_COL:    equ 4
 CAC_S_H:     equ 16
 CAC_T_H:     equ 22
 BIRD_H:      equ 10
@@ -32,6 +33,7 @@ start:
 
 main_loop:
         halt
+        call flush_attrs
         call early_clouds
         call update_world
         call render_world
@@ -152,6 +154,8 @@ dino_land:
         ld (dino_vy), a
         ret
 
+; Кактусы едут влево с общей speed.
+; Птица тоже только влево, к динозавру: свой шаг в ix+6, 2 или 3 пикселя.
 update_obs:
         ld ix, obs
         ld b, 3
@@ -162,7 +166,17 @@ uo_loop:
         jr z, uo_next
         ld l, (ix+0)
         ld h, (ix+1)
+        ld a, (ix+2)
+        cp 4
+        jr c, uo_cactus
+        ld a, (ix+6)
+        cp 2
+        jr nc, uo_sub
+        ld a, 2
+        jr uo_sub
+uo_cactus:
         ld a, (speed)
+uo_sub:
         ld e, a
         ld d, 0
         or a
@@ -174,7 +188,7 @@ uo_loop:
         jr nc, uo_next
         ld (ix+2), 0
 uo_next:
-        ld de, 6
+        ld de, 7
         add ix, de
         pop bc
         djnz uo_loop
@@ -199,31 +213,149 @@ uc2_keep:
         ld (cloud2_x), hl
         ret
 
+; Один проход на speed бит. Бит камешка — с вероятностью 1/16.
 scroll_pebbles:
+        call rnd_core
+        ld d, h
+        ld e, l
+        ld c, 0
+        ld a, e
+        and $0F
+        jr nz, spb1
+        set 0, c
+spb1:
+        ld a, e
+        and $F0
+        jr nz, spb2
+        set 1, c
+spb2:
+        ld a, d
+        and $0F
+        jr nz, spb3
+        set 2, c
+spb3:
+        ld a, d
+        and $F0
+        jr nz, spb4
+        set 3, c
+spb4:
+        ld a, (speed)
+        cp 5
+        jr c, sp_mask
+        push bc
+        call rnd_core
+        and $0F
+        pop bc
+        jr nz, sp_mask
+        set 4, c
+sp_mask:
         ld a, (speed)
         ld b, a
-spb_loop:
-        push bc
-        call scroll_one
-        pop bc
-        djnz spb_loop
-        ret
+        ld a, 1
+sp_ml:
+        add a, a
+        djnz sp_ml
+        dec a
+        and c
+        ld c, a
+        ld a, (speed)
+        cp 3
+        jp c, sp_sh2
+        jp z, sp_sh3
+        cp 5
+        jp z, sp_sh5
+        jp sp_sh4
 
-scroll_one:
-        call rnd
-        and 15
-        jr nz, so_clear
-        scf
-        jr so_shift
-so_clear:
-        or a
-so_shift:
+sp_sh2:
         ld hl, pebbles+31
         ld b, 32
-so_loop:
-        rl (hl)
+sp_sh2l:
+        ld a, (hl)
+        ld e, a
+        rlca
+        rlca
+        and 3
+        ld d, a
+        ld a, e
+        add a, a
+        add a, a
+        or c
+        ld (hl), a
+        ld c, d
         dec hl
-        djnz so_loop
+        djnz sp_sh2l
+        ret
+
+sp_sh3:
+        ld hl, pebbles+31
+        ld b, 32
+sp_sh3l:
+        ld a, (hl)
+        ld e, a
+        rlca
+        rlca
+        rlca
+        and 7
+        ld d, a
+        ld a, e
+        add a, a
+        add a, a
+        add a, a
+        or c
+        ld (hl), a
+        ld c, d
+        dec hl
+        djnz sp_sh3l
+        ret
+
+sp_sh4:
+        ld hl, pebbles+31
+        ld b, 32
+sp_sh4l:
+        ld a, (hl)
+        ld e, a
+        rlca
+        rlca
+        rlca
+        rlca
+        and 15
+        ld d, a
+        ld a, e
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        or c
+        ld (hl), a
+        ld c, d
+        dec hl
+        djnz sp_sh4l
+        ret
+
+sp_sh5:
+        ld hl, pebbles+31
+        ld b, 32
+sp_sh5l:
+        ld a, (hl)
+        ld e, a
+        rlca
+        rlca
+        rlca
+        rlca
+        rlca
+        and 31
+        ld d, a
+        ld a, e
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        or c
+        ld (hl), a
+        ld c, d
+        dec hl
+        djnz sp_sh5l
         ret
 
 try_spawn:
@@ -253,7 +385,7 @@ ts_max:
         ld hl, (tmp_x)
         ld (max_x), hl
 ts_max_n:
-        ld de, 6
+        ld de, 7
         add ix, de
         pop bc
         djnz ts_max
@@ -271,7 +403,7 @@ ts_find:
         ld a, (ix+2)
         or a
         jr z, ts_put
-        ld de, 6
+        ld de, 7
         add ix, de
         djnz ts_find
         ld a, 4
@@ -283,6 +415,13 @@ ts_put:
         ld hl, 256
         ld (ix+0), l
         ld (ix+1), h
+        cp 4
+        jr c, ts_gap
+        call rnd
+        and 1
+        add a, 2
+        ld (ix+6), a
+ts_gap:
         call rnd
         and 63
         add a, 50
@@ -360,10 +499,52 @@ us_loop:
         ld hl, (score)
         inc hl
         ld (score), hl
+        ld a, h
+        or l
+        jr z, us_wrap
+        call bump_score_digits
+        jr us_next
+us_wrap:
+        call zero_score_dig
+us_next:
         pop af
         jr us_loop
 us_store:
         ld (score_frac), a
+        ret
+
+; score_from — первая цифра, которую нужно перерисовать. 5 = экран свежий.
+bump_score_digits:
+        ld hl, score_dig+4
+        ld c, 4
+bsd_loop:
+        inc (hl)
+        ld a, (hl)
+        cp 10
+        jr c, bsd_mark
+        ld (hl), 0
+        dec hl
+        dec c
+        jp p, bsd_loop
+        ld c, 0
+bsd_mark:
+        ld hl, score_from
+        ld a, (hl)
+        cp c
+        ret c
+        ret z
+        ld (hl), c
+        ret
+
+zero_score_dig:
+        xor a
+        ld (score_from), a
+        ld hl, score_dig
+        ld b, 5
+zsd_loop:
+        ld (hl), a
+        inc hl
+        djnz zsd_loop
         ret
 
 update_speed:
@@ -385,7 +566,8 @@ update_night:
         ret z
         ld a, b
         ld (night), a
-        call apply_colors
+        ld a, 1
+        ld (attr_dirty), a
         ret
 
 check_hit:
@@ -404,7 +586,7 @@ ch_loop:
         call die
         ret
 ch_next:
-        ld de, 6
+        ld de, 7
         add ix, de
         pop bc
         djnz ch_loop
@@ -422,6 +604,12 @@ die:
         jr c, die_snd
         ld hl, (score)
         ld (hi_score), hl
+        ld hl, score_dig
+        ld de, hi_dig
+        ld bc, 5
+        ldir
+        xor a
+        ld (hi_from), a
 die_snd:
         ld a, 1
         ld (death_play), a
@@ -547,18 +735,30 @@ signed_lt:
         pop hl
         ret
 
-; xorshift 16. Результат в A, seed обновлён.
+; xorshift 16. Результат в A, seed обновлён. BC, DE, HL сохраняются.
 rnd:
         push bc
         push de
         push hl
+        call rnd_core
+        pop hl
+        pop de
+        pop bc
+        ret
+
+; То же, но HL = новое seed, A = младший байт. BC сохраняется.
+rnd_core:
+        push bc
         ld hl, (seed)
         ld d, h
         ld e, l
-        ld b, 7
-rnd_s7:
         add hl, hl
-        djnz rnd_s7
+        add hl, hl
+        add hl, hl
+        add hl, hl
+        add hl, hl
+        add hl, hl
+        add hl, hl
         ld a, h
         xor d
         ld h, a
@@ -567,11 +767,24 @@ rnd_s7:
         ld l, a
         ld d, h
         ld e, l
-        ld b, 9
-rnd_s9:
         srl d
         rr e
-        djnz rnd_s9
+        srl d
+        rr e
+        srl d
+        rr e
+        srl d
+        rr e
+        srl d
+        rr e
+        srl d
+        rr e
+        srl d
+        rr e
+        srl d
+        rr e
+        srl d
+        rr e
         ld a, h
         xor d
         ld h, a
@@ -583,8 +796,6 @@ rnd_s9:
         ld h, a
         ld (seed), hl
         ld a, l
-        pop hl
-        pop de
         pop bc
         ret
 
@@ -673,7 +884,7 @@ render_world:
         or a
         jr z, rw_clouds
         call cls_pixels
-        call apply_colors
+        call draw_ground_lines
         call draw_sign
         xor a
         ld (need_cls), a
@@ -714,37 +925,49 @@ draw_sign:
         call print_str
         ret
 
-apply_colors:
+; Заливка атрибутов в верхней рамке, сразу после HALT. Стек на время
+; смотрит в экран, поэтому прерывания выключены.
+flush_attrs:
+        ld a, (attr_dirty)
+        or a
+        ret z
+        xor a
+        ld (attr_dirty), a
+        di
+        ld (saved_sp), sp
         ld a, (night)
         or a
-        ld a, $47
-        jr z, ac_fill
-        ld a, $78
-ac_fill:
-        ld hl, $5800
-        ld de, $5801
-        ld bc, $02FF
-        ld (hl), a
-        ldir
+        ld hl, $4747
+        jr z, fa_fill
+        ld hl, $7878
+fa_fill:
+        ld sp, $5B00
+        ld b, 96
+fa_loop:
+        push hl
+        push hl
+        push hl
+        push hl
+        djnz fa_loop
+        ld sp, (saved_sp)
         ld a, (night)
         or a
-        ld a, 0
-        jr z, ac_border
+        jr z, fa_day
         ld a, 7
-ac_border:
+        jr fa_out
+fa_day:
+        xor a
+fa_out:
         ld (border_col), a
         out ($FE), a
+        ei
         ret
 
 erase_dino:
-        ld hl, (old_dino_x)
-        ld (spr_x), hl
         ld a, (old_dino_y)
-        ld (spr_y), a
-        ld a, DINO_H
-        ld (spr_h), a
-        call erase_sprite
-        ret
+        call dino_de
+        ld b, DINO_H
+        jp es2
 
 erase_obs:
         ld ix, obs
@@ -761,7 +984,7 @@ eo_loop:
         call metrics_from_type
         call erase_sprite
 eo_next:
-        ld de, 6
+        ld de, 7
         add ix, de
         pop bc
         djnz eo_loop
@@ -781,67 +1004,77 @@ erase_cloud:
         ld (spr_y), a
         ld a, CLOUD_H
         ld (spr_h), a
-        call erase_sprite
-        ret
+        ld a, 3
+        ld (spr_w), a
+        jp erase_sprite
 
-; A = тип. Ставит spr_y и spr_h. Всегда стираем 3 байта в ширину.
+; A = тип. Ставит spr_y, spr_h и spr_w (видимая ширина в байтах).
 metrics_from_type:
         cp 2
         jr z, mt_tall
+        cp 3
+        jr z, mt_wide
         cp 4
         jr z, mt_blow
         cp 5
         jr z, mt_bhigh
         cp 1
-        jr z, mt_short
-        cp 3
-        jr z, mt_short
-        ld a, BIRD_LOW_Y
-        ld (spr_y), a
-        ld a, BIRD_H
-        ld (spr_h), a
-        ret
+        jr nz, mt_blow
 mt_short:
         ld a, GROUND_Y-CAC_S_H
         ld (spr_y), a
         ld a, CAC_S_H
         ld (spr_h), a
+        ld a, 2
+        ld (spr_w), a
+        ret
+mt_wide:
+        ld a, GROUND_Y-CAC_S_H
+        ld (spr_y), a
+        ld a, CAC_S_H
+        ld (spr_h), a
+        ld a, 3
+        ld (spr_w), a
         ret
 mt_tall:
         ld a, GROUND_Y-CAC_T_H
         ld (spr_y), a
         ld a, CAC_T_H
         ld (spr_h), a
+        ld a, 2
+        ld (spr_w), a
         ret
 mt_blow:
         ld a, BIRD_LOW_Y
         ld (spr_y), a
         ld a, BIRD_H
         ld (spr_h), a
+        ld a, 3
+        ld (spr_w), a
         ret
 mt_bhigh:
         ld a, BIRD_HIGH_Y
         ld (spr_y), a
         ld a, BIRD_H
         ld (spr_h), a
+        ld a, 3
+        ld (spr_w), a
         ret
 
-draw_ground:
+; Линии земли не меняются. Камешки — отдельной строкой каждый кадр.
+draw_ground_lines:
         ld b, GROUND_Y
         call fill_row_ff
         ld b, GROUND_Y+1
-        call fill_row_ff
+        jp fill_row_ff
+
+draw_ground:
         ld b, GROUND_Y+3
         ld a, 0
         call pixadr
         ld hl, pebbles
-        ld b, 32
-dg_p:
-        ld a, (hl)
-        ld (de), a
-        inc hl
-        inc e
-        djnz dg_p
+        ld bc, 32
+        ldir
         ret
 
 fill_row_ff:
@@ -867,11 +1100,11 @@ draw_clouds:
 draw_cloud:
         ld (spr_x), hl
         ld (spr_y), a
+        ld a, 3
+        ld (spr_w), a
         ld hl, cloud
         ld b, CLOUD_H
-        ld c, 2
-        call blit
-        ret
+        jp blit
 
 draw_obs:
         ld ix, obs
@@ -888,7 +1121,7 @@ do_loop:
         call sprite_for_type
         call blit
 do_next:
-        ld de, 6
+        ld de, 7
         add ix, de
         pop bc
         djnz do_loop
@@ -909,6 +1142,8 @@ sprite_for_type:
         ld (spr_y), a
         ld b, CAC_S_H
         ld c, 1
+        ld a, 2
+        ld (spr_w), a
         ret
 sf_tall:
         ld hl, cac_tall
@@ -916,6 +1151,8 @@ sf_tall:
         ld (spr_y), a
         ld b, CAC_T_H
         ld c, 1
+        ld a, 2
+        ld (spr_w), a
         ret
 sf_wide:
         ld hl, cac_wide
@@ -923,6 +1160,8 @@ sf_wide:
         ld (spr_y), a
         ld b, CAC_S_H
         ld c, 2
+        ld a, 3
+        ld (spr_w), a
         ret
 sf_bird_h:
         ld a, BIRD_HIGH_Y
@@ -941,13 +1180,11 @@ sf_b1:
 sf_bdone:
         ld b, BIRD_H
         ld c, 2
+        ld a, 3
+        ld (spr_w), a
         ret
 
 draw_dino:
-        ld hl, DINO_X
-        ld (spr_x), hl
-        ld a, (dino_y)
-        ld (spr_y), a
         ld a, (state)
         cp STATE_DEAD
         jr z, dd_dead
@@ -970,10 +1207,62 @@ dd_jump:
 dd_dead:
         ld hl, dino_dead
 dd_go:
+        ld a, (dino_y)
+        call dino_de
         ld b, DINO_H
-        ld c, 2
-        call blit
-        ret
+        jp dino_or
+
+; A = Y. DE = адрес колонки динозавра. X всегда 32, сдвиг 0.
+dino_de:
+        ld b, a
+        ld a, DINO_COL
+        jp pixadr
+
+; HL = кадр сдвига 0 (3 байта в строке, третий нулевой). B = высота, DE = экран.
+; Накладывается через OR: кактус уже нарисован прямой записью.
+dino_or:
+        ld a, d
+        and 7
+        ld c, a
+        ld a, 8
+        sub c
+        cp b
+        jr c, dor_fit
+        ld a, b
+dor_fit:
+        ld c, a
+        ld a, b
+        sub c
+        ld b, a
+dor_row:
+        ld a, (de)
+        or (hl)
+        ld (de), a
+        inc hl
+        inc e
+        ld a, (de)
+        or (hl)
+        ld (de), a
+        inc hl
+        inc hl
+        dec e
+        dec c
+        jr z, dor_end
+        inc d
+        jr dor_row
+dor_end:
+        ld a, b
+        or a
+        ret z
+        inc d
+        ld a, e
+        add a, 32
+        ld e, a
+        jr c, dino_or
+        ld a, d
+        sub 8
+        ld d, a
+        jr dino_or
 
 draw_hud:
         ld a, (hud_ready)
@@ -986,37 +1275,72 @@ draw_hud:
         call print_str
         ld a, 1
         ld (hud_ready), a
-        ld hl, $FFFF
-        ld (hud_score), hl
-        ld (hud_hi), hl
         ld a, $FF
         ld (hud_msg), a
 hud_nums:
-        ld hl, (hi_score)
-        ld de, (hud_hi)
-        or a
-        sbc hl, de
-        jr z, hud_no_hi
-        ld hl, (hi_score)
-        ld (hud_hi), hl
+        ld a, (hi_from)
+        cp 5
+        jr nc, hud_no_hi
+        ld c, a
         ld b, 0
-        ld c, 17
+        ld hl, hi_dig
+        add hl, bc
+        ld a, c
+        add a, 17
+        ld c, a
+        ld b, 0
+        push hl
         call char_addr
-        ld hl, (hi_score)
-        call print_hl5
+        pop hl
+        ld a, (hi_from)
+        ld b, a
+        ld a, 5
+        sub b
+        ld b, a
+hud_hi_d:
+        push bc
+        push hl
+        ld a, (hl)
+        add a, '0'
+        call print_char
+        pop hl
+        inc hl
+        pop bc
+        djnz hud_hi_d
+        ld a, 5
+        ld (hi_from), a
 hud_no_hi:
-        ld hl, (score)
-        ld de, (hud_score)
-        or a
-        sbc hl, de
-        jr z, hud_no_sc
-        ld hl, (score)
-        ld (hud_score), hl
+        ld a, (score_from)
+        cp 5
+        jr nc, hud_no_sc
+        ld c, a
         ld b, 0
-        ld c, 24
+        ld hl, score_dig
+        add hl, bc
+        ld a, c
+        add a, 24
+        ld c, a
+        ld b, 0
+        push hl
         call char_addr
-        ld hl, (score)
-        call print_hl5
+        pop hl
+        ld a, (score_from)
+        ld b, a
+        ld a, 5
+        sub b
+        ld b, a
+hud_sc_d:
+        push bc
+        push hl
+        ld a, (hl)
+        add a, '0'
+        call print_char
+        pop hl
+        inc hl
+        pop bc
+        djnz hud_sc_d
+        ld a, 5
+        ld (score_from), a
 hud_no_sc:
         ld a, (state)
         cp STATE_RUN
@@ -1080,7 +1404,7 @@ cp_obs:
         ld (ix+4), a
         ld a, (ix+2)
         ld (ix+5), a
-        ld de, 6
+        ld de, 7
         add ix, de
         djnz cp_obs
         ld hl, (cloud1_x)
@@ -1094,7 +1418,7 @@ cp_obs:
 ;------------------------------------------------------------
 
 ; HL = предсдвинутый спрайт (8 кадров по height*3 байта).
-; B = высота. spr_x / spr_y заданы. Пиксели накладываются через OR.
+; B = высота. spr_x / spr_y / spr_w заданы. Прямая запись, без OR.
 ; IX не портится.
 blit:
         ld (spr_ptr), hl
@@ -1103,19 +1427,18 @@ blit:
         call prep_span
         ret c
         ld hl, (spr_ptr)
-        ld a, (shift_n)
-        or a
-        jr z, bl_aimed
-        ld d, a
-bl_seek:
         ld a, (spr_h)
         ld c, a
         add a, a
         add a, c
         ld c, a
         ld b, 0
+        ld a, (shift_n)
+        or a
+        jr z, bl_aimed
+bl_seek:
         add hl, bc
-        dec d
+        dec a
         jr nz, bl_seek
 bl_aimed:
         ld de, (scr_ptr)
@@ -1131,37 +1454,48 @@ bl_aimed:
         dec a
         jr z, bl_r1
 bl_r2:
-        ld a, (de)
-        or (hl)
+        ld a, d
+        and 7
+        ld c, a
+        ld a, 8
+        sub c
+        cp b
+        jr c, bl2_fit
+        ld a, b
+bl2_fit:
+        ld c, a
+        ld a, b
+        sub c
+        ld b, a
+bl2_row:
+        ld a, (hl)
         ld (de), a
         inc hl
         inc e
-        ld a, (de)
-        or (hl)
+        ld a, (hl)
         ld (de), a
         inc hl
         inc hl
         dec e
+        dec c
+        jr z, bl2_end
         inc d
-        ld a, d
-        and 7
-        jr z, bl_r2b
-        djnz bl_r2
-        ret
-bl_r2b:
+        jr bl2_row
+bl2_end:
+        ld a, b
+        or a
+        ret z
+        inc d
         ld a, e
         add a, 32
         ld e, a
-        jr c, bl_r2dj
+        jr c, bl_r2
         ld a, d
         sub 8
         ld d, a
-bl_r2dj:
-        djnz bl_r2
-        ret
+        jr bl_r2
 bl_r1:
-        ld a, (de)
-        or (hl)
+        ld a, (hl)
         ld (de), a
         inc hl
         inc hl
@@ -1190,8 +1524,7 @@ bl_left:
 bl_l1:
         inc hl
         inc hl
-        ld a, (de)
-        or (hl)
+        ld a, (hl)
         ld (de), a
         inc hl
         inc d
@@ -1213,13 +1546,11 @@ bl_l1dj:
         ret
 bl_l2:
         inc hl
-        ld a, (de)
-        or (hl)
+        ld a, (hl)
         ld (de), a
         inc hl
         inc e
-        ld a, (de)
-        or (hl)
+        ld a, (hl)
         ld (de), a
         inc hl
         dec e
@@ -1241,74 +1572,99 @@ bl_l2dj:
         djnz bl_l2
         ret
 bl3:
-        ld a, (de)
-        or (hl)
-        ld (de), a
-        inc hl
-        inc e
-        ld a, (de)
-        or (hl)
-        ld (de), a
-        inc hl
-        inc e
-        ld a, (de)
-        or (hl)
-        ld (de), a
-        inc hl
-        dec e
-        dec e
-        inc d
         ld a, d
         and 7
-        jr z, bl3b
-        djnz bl3
-        ret
-bl3b:
+        ld c, a
+        ld a, 8
+        sub c
+        cp b
+        jr c, bl3_fit
+        ld a, b
+bl3_fit:
+        ld c, a
+        ld a, b
+        sub c
+        ld b, a
+bl3_row:
+        ld a, (hl)
+        ld (de), a
+        inc hl
+        inc e
+        ld a, (hl)
+        ld (de), a
+        inc hl
+        inc e
+        ld a, (hl)
+        ld (de), a
+        inc hl
+        dec e
+        dec e
+        dec c
+        jr z, bl3_end
+        inc d
+        jr bl3_row
+bl3_end:
+        ld a, b
+        or a
+        ret z
+        inc d
         ld a, e
         add a, 32
         ld e, a
-        jr c, bl3dj
+        jr c, bl3
         ld a, d
         sub 8
         ld d, a
-bl3dj:
-        djnz bl3
-        ret
+        jr bl3
 
 ; Стирает видимый кусок спрайта. spr_x, spr_y, spr_h заданы.
 erase_sprite:
         call prep_span
         ret c
-        ld c, 0
         ld a, (span_n)
         cp 3
-        jr z, es3
+        jp z, es3
         dec a
         jr z, es1
 es2:
-        ld a, c
+        ld a, d
+        and 7
+        ld c, a
+        ld a, 8
+        sub c
+        cp b
+        jr c, es2_fit
+        ld a, b
+es2_fit:
+        ld c, a
+        ld a, b
+        sub c
+        ld b, a
+es2_row:
+        xor a
         ld (de), a
         inc e
         ld (de), a
         dec e
+        dec c
+        jr z, es2_end
         inc d
-        ld a, d
-        and 7
-        jr z, es2b
-        djnz es2
-        ret
-es2b:
+        jr es2_row
+es2_end:
+        ld a, b
+        or a
+        ret z
+        inc d
         ld a, e
         add a, 32
         ld e, a
-        jr c, es2dj
+        jr c, es2
         ld a, d
         sub 8
         ld d, a
-es2dj:
-        djnz es2
-        ret
+        jr es2
 es1:
+        ld c, 0
         ld a, c
         ld (de), a
         inc d
@@ -1329,33 +1685,47 @@ es1dj:
         djnz es1
         ret
 es3:
-        ld a, c
-        ld (de), a
-        inc e
-        ld (de), a
-        inc e
-        ld (de), a
-        dec e
-        dec e
-        inc d
         ld a, d
         and 7
-        jr z, es3b
-        djnz es3
-        ret
-es3b:
+        ld c, a
+        ld a, 8
+        sub c
+        cp b
+        jr c, es3_fit
+        ld a, b
+es3_fit:
+        ld c, a
+        ld a, b
+        sub c
+        ld b, a
+es3_row:
+        xor a
+        ld (de), a
+        inc e
+        ld (de), a
+        inc e
+        ld (de), a
+        dec e
+        dec e
+        dec c
+        jr z, es3_end
+        inc d
+        jr es3_row
+es3_end:
+        ld a, b
+        or a
+        ret z
+        inc d
         ld a, e
         add a, 32
         ld e, a
-        jr c, es3dj
+        jr c, es3
         ld a, d
         sub 8
         ld d, a
-es3dj:
-        djnz es3
-        ret
+        jr es3
 
-; Считает колонку, сдвиг и видимый кусок из 3 байт.
+; Колонка, сдвиг и видимый кусок шириной spr_w байт.
 ; CF = 1, если рисовать нечего. Иначе DE = экран, B = высота.
 prep_span:
         ld hl, (spr_x)
@@ -1365,7 +1735,7 @@ prep_span:
         call x_to_col
         xor a
         ld (skip_n), a
-        ld a, 3
+        ld a, (spr_w)
         ld (span_n), a
         bit 7, h
         jr nz, ps_neg
@@ -1375,21 +1745,29 @@ prep_span:
         ld a, l
         cp 32
         jr nc, ps_off
-        cp 30
+        ld c, a
+        ld a, (spr_w)
+        add a, c
+        cp 33
         jr c, ps_addr
         ld a, 32
-        sub l
+        sub c
         ld (span_n), a
         jr ps_addr
 ps_neg:
-        ld de, -2
+        ld a, (spr_w)
+        ld e, a
+        ld a, 1
+        sub e
+        ld e, a
+        ld d, $FF
         call signed_lt
         jr c, ps_off
         xor a
         sub l
         ld (skip_n), a
         ld c, a
-        ld a, 3
+        ld a, (spr_w)
         sub c
         ld (span_n), a
         ld hl, 0
@@ -1454,22 +1832,7 @@ char_addr:
         call pixadr
         ret
 
-; Один пиксельный шаг вниз. Портит A.
-down_de:
-        inc d
-        ld a, d
-        and 7
-        ret nz
-        ld a, e
-        add a, 32
-        ld e, a
-        ret c
-        ld a, d
-        sub 8
-        ld d, a
-        ret
-
-; Печатает A, DE — верх символа. DE сдвигается на колонку вправо.
+; Печатает A. DE — верх знакоместа, после вызова сдвигается на колонку вправо.
 print_char:
         push bc
         push de
@@ -1487,7 +1850,7 @@ pc_loop:
         ld a, (hl)
         ld (de), a
         inc hl
-        call down_de
+        inc d
         djnz pc_loop
         pop hl
         pop de
@@ -1505,30 +1868,6 @@ print_str:
         inc hl
         jr print_str
 
-; Печатает HL как 5 десятичных цифр.
-print_hl5:
-        ld bc, 10000
-        call pr_digit
-        ld bc, 1000
-        call pr_digit
-        ld bc, 100
-        call pr_digit
-        ld bc, 10
-        call pr_digit
-        ld bc, 1
-pr_digit:
-        ld a, '0'-1
-pd_loop:
-        inc a
-        or a
-        sbc hl, bc
-        jr nc, pd_loop
-        add hl, bc
-        push bc
-        call print_char
-        pop bc
-        ret
-
 ;------------------------------------------------------------
 ; Старт и рестарт
 ;------------------------------------------------------------
@@ -1541,6 +1880,12 @@ init_game:
         ld (frame), a
         ld (released), a
         ld (death_play), a
+        ld hl, hi_dig
+        ld b, 5
+ig_hi:
+        ld (hl), 0
+        inc hl
+        djnz ig_hi
         call init_round
         ret
 
@@ -1562,15 +1907,24 @@ init_round:
         ld a, 1
         ld (need_cls), a
         ld (cloud_dirty), a
+        ld (attr_dirty), a
         xor a
         ld (hud_ready), a
         ld (grav_phase), a
+        ld (score_from), a
+        ld (hi_from), a
+        ld hl, score_dig
+        ld b, 5
+ir_dig:
+        ld (hl), 0
+        inc hl
+        djnz ir_dig
         ld hl, DINO_X
         ld (old_dino_x), hl
         ld a, DINO_Y0
         ld (old_dino_y), a
         ld hl, obs
-        ld b, 18
+        ld b, 21
 ir_clr:
         ld (hl), 0
         inc hl
@@ -1635,12 +1989,16 @@ dino_vy:     db 0
 grav_phase:  db 0
 hud_ready:   db 0
 hud_msg:     db $FF
-hud_score:   dw $FFFF
-hud_hi:      dw $FFFF
 speed:       db 2
 score:       dw 0
 score_frac:  db 0
+score_dig:   ds 5
+score_from:  db 0
 hi_score:    dw 0
+hi_dig:      ds 5
+hi_from:     db 0
+attr_dirty:  db 1
+saved_sp:    dw 0
 spawn_t:     db 0
 first_spawn: db 1
 seed:        dw 12345
@@ -1650,12 +2008,13 @@ cloud1_x:    dw 30
 cloud1_old:  dw 30
 cloud2_x:    dw 170
 cloud2_old:  dw 170
-obs:         ds 18
+; 3 слота по 7 байт: x, тип, старый x, старый тип, шаг птицы.
+obs:         ds 21
 pebbles:     ds 32
 spr_x:       dw 0
 spr_y:       db 0
 spr_h:       db 0
-spr_w:       db 0
+spr_w:       db 3
 spr_ptr:     dw 0
 shift_n:     db 0
 skip_n:      db 0

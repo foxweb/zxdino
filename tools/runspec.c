@@ -193,7 +193,7 @@ int main(int argc, char **argv) {
                 int block = 0;
                 int jump_at = 36 + speed * 18;
                 for (int i = 0; i < 3; i++) {
-                    int base = a_obs + i * 6;
+                    int base = a_obs + i * 7;
                     int typ = mem[base + 2];
                     int x = sword(base);
                     if (!typ || x < 16 || x > 160)
@@ -225,7 +225,7 @@ int main(int argc, char **argv) {
                 f, st, mem[a_y], (int)(int8_t)mem[a_vy], uword(a_score), mem[a_speed], mem[a_night],
                 mem[a_frame], mem[a_spawn], space_down, ts, pixels_set(), border_col);
         for (int i = 0; i < 3; i++) {
-            int base = a_obs + i * 6;
+            int base = a_obs + i * 7;
             fprintf(log, " o%d=%d:%d", i, mem[base + 2], sword(base));
         }
         fprintf(log, "\n");
