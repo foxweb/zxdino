@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assemble the Spectrum dino and pack TAP / Z80 images."""
 
+import os
 import struct
 import subprocess
 import sys
@@ -8,7 +9,6 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-ROM = Path("/Users/foxweb/Downloads/Fuse for macOS/Fuse.app/Contents/Resources/48.rom")
 LIBZ80 = Path("/tmp/libz80-master")
 ORG = 0x8000
 
@@ -221,11 +221,22 @@ def write_watch(labels: dict, path: Path) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
-def run_case(exe: Path, mode: str, frames: int) -> Path:
+def find_rom() -> Path | None:
+    """16 КБ ПЗУ 48K. В репозиторий не входит: SPECTRUM_ROM или ./48.rom."""
+    env = os.environ.get("SPECTRUM_ROM")
+    if env:
+        return Path(env)
+    local = ROOT / "48.rom"
+    if local.exists():
+        return local
+    return None
+
+
+def run_case(exe: Path, rom: Path, mode: str, frames: int) -> Path:
     out = ROOT / "preview" / mode
     out.mkdir(parents=True, exist_ok=True)
     subprocess.check_call(
-        [str(exe), str(ROM), str(ROOT / "dino.bin"), str(ROOT / "preview" / "watch.txt"), str(out), mode, str(frames)]
+        [str(exe), str(rom), str(ROOT / "dino.bin"), str(ROOT / "preview" / "watch.txt"), str(out), mode, str(frames)]
     )
     for scr in sorted(out.glob("*.scr")):
         scr_to_png(scr.read_bytes(), scr.with_suffix(".png"))
@@ -235,16 +246,17 @@ def run_case(exe: Path, mode: str, frames: int) -> Path:
 def main() -> None:
     code, labels = assemble()
     build_images(code)
-    if not ROM.exists():
-        print("ROM missing, skipped emulation")
+    rom = find_rom()
+    if rom is None or not rom.is_file():
+        print("No 48K ROM (48.rom or SPECTRUM_ROM), skipped emulation")
         return
     exe = ensure_runner()
     preview = ROOT / "preview"
     preview.mkdir(exist_ok=True)
     write_watch(labels, preview / "watch.txt")
-    run_case(exe, "wait", 30)
-    run_case(exe, "die", 400)
-    run_case(exe, "play", 700)
+    run_case(exe, rom, "wait", 30)
+    run_case(exe, rom, "die", 400)
+    run_case(exe, rom, "play", 700)
 
 
 if __name__ == "__main__":
