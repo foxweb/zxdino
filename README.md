@@ -36,13 +36,25 @@ Under WSL, `apt install z80asm` and then the Linux build. A native prompt works 
 python build.py
 ```
 
-Preview frames are compiled with the Unix command `cc` and libz80 is read from `/tmp/libz80-master`, so that step runs on macOS and Linux. On Windows the script still writes `dino.tap` and `dino.z80`. Under WSL, follow the Linux steps.
+Preview frames are compiled with the Unix command `cc` and libz80 is read from `/tmp/libz80-master`, so that step runs on macOS and Linux. On Windows the script still writes the TAP and Z80 images. Under WSL, follow the Linux steps.
 
 ## Controls
 
-SPACE or Q jumps. After a collision, release the key, then press it again to start the next run.
+Any key starts a run. SPACE or Q jumps. A or CAPS SHIFT ducks, so a low bird passes overhead. The title lists the keys, and GAME OVER shows HIT ANY KEY.
 
-The score counts up while you run. The high score lasts until you reset the machine. The screen flips between day and night as the score climbs.
+After a collision, release the key, then press any key to start the next run.
+
+The score counts up while you run. The high score lasts until you reset the machine. The screen flips between day and night as the score climbs, and the run keeps speeding up with it.
+
+## Demo
+
+The same `dino.tap` and `dino.z80` include an attract mode. The source is `dino.asm`.
+
+The title stays up for 5 seconds. Any key during that time starts your own run. If you wait, the dinosaur plays by itself and the screen shows DEMO. It jumps late enough that one jump clears a cactus, ducks under low birds, and runs under high birds.
+
+Any key stops the demonstration and returns to the title. Release the key, then press any key to play yourself. If you leave the title alone for another 5 seconds, the demonstration starts again.
+
+The same 5 second wait applies after GAME OVER. If you do not restart, the demonstration takes over. When the demonstration itself crashes, it starts another run after a short pause.
 
 ## Build
 

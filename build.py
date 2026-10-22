@@ -78,12 +78,12 @@ def header(kind: int, name: str, length: int, p1: int, p2: int) -> bytes:
     return bytes((kind,)) + raw + struct.pack("<HHH", length, p1, p2)
 
 
-def make_tap(code: bytes) -> bytes:
+def make_tap(code: bytes, name: str = "dino") -> bytes:
     prog = basic_loader()
     blocks = [
-        tap_block(0x00, header(0, "dino", len(prog), 10, len(prog))),
+        tap_block(0x00, header(0, name, len(prog), 10, len(prog))),
         tap_block(0xFF, prog),
-        tap_block(0x00, header(3, "dino-code", len(code), ORG, 0x8000)),
+        tap_block(0x00, header(3, f"{name}-code", len(code), ORG, 0x8000)),
         tap_block(0xFF, code),
     ]
     return b"".join(blocks)
@@ -157,32 +157,38 @@ def scr_to_png(scr: bytes, path: Path, scale: int = 3) -> None:
     write_png(path, bw, bh, buf)
 
 
-def assemble() -> tuple[bytes, dict]:
-    subprocess.check_call([sys.executable, str(ROOT / "art.py"), str(ROOT / "sprites.inc")])
-    lab = ROOT / "dino.lab"
-    bin_path = ROOT / "dino.bin"
+def assemble_asm(source: str) -> tuple[bytes, dict]:
+    lab = ROOT / f"{source}.lab"
+    bin_path = ROOT / f"{source}.bin"
     subprocess.check_call(
         [
             "z80asm",
             f"--output={bin_path}",
             f"--label={lab}",
-            str(ROOT / "dino.asm"),
+            str(ROOT / f"{source}.asm"),
         ],
         cwd=ROOT,
     )
     code = bin_path.read_bytes()
     labels = parse_labels(lab.read_text())
     if labels.get("start") != ORG:
-        raise SystemExit(f"start label is {labels.get('start')}, expected {ORG}")
+        raise SystemExit(f"{source}: start label is {labels.get('start')}, expected {ORG}")
     return code, labels
 
 
-def build_images(code: bytes) -> None:
-    (ROOT / "dino.tap").write_bytes(make_tap(code))
-    (ROOT / "dino.z80").write_bytes(make_z80(code))
-    print(f"code {len(code)} bytes")
-    print(f"tap  {(ROOT / 'dino.tap').stat().st_size} bytes")
-    print(f"z80  {(ROOT / 'dino.z80').stat().st_size} bytes")
+def assemble() -> tuple[bytes, dict]:
+    subprocess.check_call([sys.executable, str(ROOT / "art.py"), str(ROOT / "sprites.inc")])
+    return assemble_asm("dino")
+
+
+def build_images(code: bytes, name: str = "dino") -> None:
+    tap = ROOT / f"{name}.tap"
+    z80 = ROOT / f"{name}.z80"
+    tap.write_bytes(make_tap(code, name))
+    z80.write_bytes(make_z80(code))
+    print(f"{name} code {len(code)} bytes")
+    print(f"{name} tap  {tap.stat().st_size} bytes")
+    print(f"{name} z80  {z80.stat().st_size} bytes")
 
 
 def ensure_runner() -> Path:
@@ -243,6 +249,51 @@ def run_case(exe: Path, rom: Path, mode: str, frames: int) -> Path:
     return out
 
 
+def load_log(mode: str) -> list[dict[str, str]]:
+    frames = []
+    for line in (ROOT / "preview" / mode / "log.txt").read_text().splitlines()[1:]:
+        row = {}
+        for tok in line.split():
+            if "=" in tok and not tok.startswith("o"):
+                key, value = tok.split("=", 1)
+                row[key] = value
+        frames.append(row)
+    return frames
+
+
+def check_demo(frames: list[dict[str, str]]) -> None:
+    """Attract mode starts at frame 250 and keeps running."""
+    if frames[248]["f"] != "249" or frames[248]["st"] != "0":
+        raise SystemExit("demo should still be on PRESS SPACE at frame 249")
+    if frames[249]["st"] != "1":
+        raise SystemExit("demo should start at frame 250")
+    if any(row["st"] == "2" for row in frames):
+        raise SystemExit("demo crashed")
+    doubles = 0
+    for i in range(1, len(frames) - 1):
+        landed = frames[i]["st"] == "1" and frames[i]["y"] == "150"
+        if landed and frames[i - 1]["y"] != "150" and frames[i + 1]["y"] != "150":
+            doubles += 1
+    if doubles:
+        raise SystemExit(f"demo jumped twice in a row ({doubles})")
+    if int(frames[-1]["spd"]) < 5:
+        raise SystemExit("demo did not reach the higher speeds")
+
+
+def check_over(frames: list[dict[str, str]]) -> None:
+    """A human crash returns to the attract mode after 5 seconds."""
+    death = next((i for i, row in enumerate(frames) if row["st"] == "2"), None)
+    if death is None:
+        raise SystemExit("over: the run never crashed")
+    df = int(frames[death]["f"])
+    still = next(row for row in frames if row["f"] == str(df + 200))
+    if still["st"] != "2":
+        raise SystemExit("over: GAME OVER ended before 5 seconds")
+    back = next(row for row in frames if row["f"] == str(df + 250))
+    if back["st"] != "1":
+        raise SystemExit("over: demo did not start after GAME OVER")
+
+
 def main() -> None:
     code, labels = assemble()
     build_images(code)
@@ -257,6 +308,10 @@ def main() -> None:
     run_case(exe, rom, "wait", 30)
     run_case(exe, rom, "die", 400)
     run_case(exe, rom, "play", 700)
+    run_case(exe, rom, "demo", 7000)
+    check_demo(load_log("demo"))
+    run_case(exe, rom, "over", 700)
+    check_over(load_log("over"))
 
 
 if __name__ == "__main__":

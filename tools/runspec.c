@@ -7,6 +7,7 @@
 
 static uint8_t mem[65536];
 static int space_down;
+static int duck_down;
 static int border_col;
 static Z80Context ctx;
 static int watchdog;
@@ -28,6 +29,8 @@ static byte io_read(size_t param, ushort addr) {
         return 0xFF;
     byte v = 0xFF;
     if ((addr & 0x8000) == 0 && space_down)
+        v &= (byte)~1;
+    if ((addr & 0x0200) == 0 && duck_down)
         v &= (byte)~1;
     return v;
 }
@@ -179,8 +182,11 @@ int main(int argc, char **argv) {
         int vy = (int8_t)mem[a_vy];
         int speed = mem[a_speed];
         space_down = 0;
-        if (strcmp(mode, "wait") == 0) {
+        duck_down = 0;
+        if (strcmp(mode, "wait") == 0 || strcmp(mode, "demo") == 0) {
             space_down = 0;
+        } else if (strcmp(mode, "over") == 0) {
+            space_down = (f == 1);
         } else if (strcmp(mode, "die") == 0) {
             space_down = (st == 0);
         } else if (strcmp(mode, "play") == 0) {
@@ -191,6 +197,7 @@ int main(int argc, char **argv) {
             else if (st == 1 && y >= 150 && vy == 0) {
                 int threat = 0;
                 int block = 0;
+                int duck = 0;
                 int jump_at = 36 + speed * 18;
                 for (int i = 0; i < 3; i++) {
                     int base = a_obs + i * 7;
@@ -203,11 +210,18 @@ int main(int argc, char **argv) {
                             block = 1;
                         continue;
                     }
+                    if (typ == 4) {
+                        if (x > 18 && x < 58)
+                            duck = 1;
+                        continue;
+                    }
                     if (x < jump_at)
                         threat = 1;
                 }
                 if (threat && !block)
                     space_down = 1;
+                else if (duck)
+                    duck_down = 1;
             }
         } else {
             fprintf(stderr, "bad mode %s\n", mode);

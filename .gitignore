@@ -7,8 +7,8 @@ __pycache__/
 
 # Пересоздаёт build.py
 sprites.inc
-dino.bin
-dino.lab
+*.bin
+*.lab
 
 # Кадры эмулятора
 preview/

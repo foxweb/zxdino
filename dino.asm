@@ -1,5 +1,7 @@
 ; ZX Spectrum 48K — «динозаврик» в духе офлайн-игры Chrome.
-; Управление: SPACE или Q — прыжок. После столкновения отпустите клавишу и нажмите снова.
+; Прыжок: SPACE или Q. Приседание: A или CAPS SHIFT.
+; Забег начинается с любой клавиши. Если 5 секунд не начинать, и так же после
+; GAME OVER, динозавр бежит сам. Любая клавиша прерывает демонстрацию.
 ; Точка входа: $8000. Сборка: python3 build.py
 
         org $8000
@@ -7,6 +9,10 @@
 STATE_WAIT:  equ 0
 STATE_RUN:   equ 1
 STATE_DEAD:  equ 2
+; 50 Гц × 5 с без старта — демонстрация.
+DEMO_IDLE:   equ 250
+; Кадры GAME OVER внутри демонстрации, затем новый забег.
+DEMO_RETRY:  equ 100
 
 GROUND_Y:    equ 168
 DINO_H:      equ 18
@@ -19,8 +25,7 @@ BIRD_H:      equ 10
 BIRD_LOW_Y:  equ 148
 BIRD_HIGH_Y: equ 116
 CLOUD_H:     equ 8
-CLOUD1_Y:    equ 20
-CLOUD2_Y:    equ 44
+CLOUD_N:     equ 4
 STACK:       equ $FCF0
 
 start:
@@ -69,30 +74,116 @@ update_world:
         jp z, update_wait
         cp STATE_DEAD
         jp z, update_dead
+        ld a, (demo)
+        or a
+        jr z, uw_play
+        call read_any
+        jp z, abort_demo
+uw_play:
         call update_run
         ret
 
 update_wait:
-        call read_jump
-        ret nz
+        call read_any
+        jr nz, uw_idle
+        ld a, (can_start)
+        or a
+        ret z
+        xor a
+        ld (demo), a
+        ld hl, 0
+        ld (idle_t), hl
+        ld a, STATE_RUN
+        ld (state), a
+        ret
+uw_idle:
+        ld a, (can_start)
+        or a
+        jr nz, uw_tick
+        call read_any
+        ret z
+        ld a, 1
+        ld (can_start), a
+uw_tick:
+        ld hl, (idle_t)
+        inc hl
+        ld (idle_t), hl
+        ld de, DEMO_IDLE
+        or a
+        sbc hl, de
+        ret c
+        xor a
+        ld (demo_dead), a
+        ld a, 1
+        ld (demo), a
         ld a, STATE_RUN
         ld (state), a
         ret
 
 update_dead:
-        call read_jump
+        ld a, (demo)
+        or a
+        jr z, dead_human
+        call read_any
+        jp z, abort_demo
+        ld hl, demo_dead
+        inc (hl)
+        ld a, (hl)
+        cp DEMO_RETRY
+        ret c
+        xor a
+        ld (demo_dead), a
+        call init_round
+        ld a, 1
+        ld (demo), a
+        ld a, STATE_RUN
+        ld (state), a
+        ret
+dead_human:
+        call read_any
         jr z, dead_held
         ld a, 1
         ld (released), a
-        ret
+        jr dead_idle
 dead_held:
         ld a, (released)
         or a
         ret z
         xor a
         ld (released), a
+        ld (demo), a
         call init_round
         ld a, STATE_RUN
+        ld (state), a
+        ret
+dead_idle:
+        ld hl, (idle_t)
+        inc hl
+        ld (idle_t), hl
+        ld de, DEMO_IDLE
+        or a
+        sbc hl, de
+        ret c
+        call init_round
+        xor a
+        ld (demo_dead), a
+        ld a, 1
+        ld (demo), a
+        ld a, STATE_RUN
+        ld (state), a
+        ret
+
+; Демонстрация прервана: снова заставка, через 5 секунд она включится опять.
+abort_demo:
+        xor a
+        ld (demo), a
+        ld (can_start), a
+        ld (demo_dead), a
+        ld (ducking), a
+        ld (idle_t), a
+        ld (idle_t+1), a
+        call init_round
+        xor a
         ld (state), a
         ret
 
@@ -118,6 +209,205 @@ read_jump:
         and 1
         ret
 
+; Z = приседание (A или CAPS SHIFT). CAPS SHIFT входит в стрелку вниз.
+read_duck:
+        ld a, $FE
+        in a, ($FE)
+        and 1
+        ret z
+        ld a, $FD
+        in a, ($FE)
+        and 1
+        ret
+
+; Z = нажата любая клавиша.
+read_any:
+        ld bc, $FEFE
+ra_loop:
+        in a, (c)
+        and $1F
+        cp $1F
+        jr nz, ra_yes
+        rlc b
+        jr c, ra_loop
+        or 1
+        ret
+ra_yes:
+        xor a
+        ret
+
+; Демонстрация. Z = прыгнуть. Иначе при необходимости ставит ducking.
+; Кактус — только в позднем окне, где одного прыжка хватает.
+; Низкая птица — приседание. Высокая — не прыгать, под ней проход.
+demo_act:
+        xor a
+        ld (demo_want), a
+        ld (demo_block), a
+        ld ix, obs
+        ld b, 3
+da_loop:
+        push bc
+        ld a, (ix+2)
+        or a
+        jp z, da_next
+        ld l, (ix+0)
+        ld h, (ix+1)
+        ld de, 16
+        call signed_lt
+        jp c, da_next
+        ld de, 220
+        call signed_lt
+        jp nc, da_next
+        ld a, (ix+2)
+        cp 4
+        jr z, da_low
+        cp 5
+        jr z, da_high
+        call cactus_window
+        jr nz, da_next
+        ld a, 1
+        ld (demo_want), a
+        jr da_next
+da_low:
+        ld de, 58
+        call signed_lt
+        jr nc, da_low_blk
+        ld de, 18
+        call signed_lt
+        jr c, da_low_blk
+        ld a, 1
+        ld (ducking), a
+da_low_blk:
+        ld a, (ix+6)
+        cp 3
+        jr z, da_low3
+        ld b, 26
+        ld c, 47
+        call x_between
+        jr z, da_blk
+        ld b, 66
+        ld c, 89
+        call x_between
+        jr z, da_blk
+        jr da_next
+da_low3:
+        ld b, 27
+        ld c, 50
+        call x_between
+        jr z, da_blk
+        ld b, 87
+        ld c, 113
+        call x_between
+        jr z, da_blk
+        jr da_next
+da_blk:
+        ld a, 1
+        ld (demo_block), a
+        jr da_next
+da_high:
+        ld a, (ix+6)
+        cp 3
+        ld de, 78
+        jr c, da_hi_top
+        ld de, 96
+da_hi_top:
+        call signed_lt
+        jr nc, da_next
+        ld a, (ix+6)
+        cp 3
+        ld de, 36
+        jr c, da_hi_bot
+        ld de, 42
+da_hi_bot:
+        call signed_lt
+        jr c, da_next
+        ld a, 1
+        ld (demo_block), a
+da_next:
+        ld de, 7
+        add ix, de
+        pop bc
+        dec b
+        jp nz, da_loop
+        ld a, (demo_block)
+        or a
+        jr nz, da_no
+        ld a, (demo_want)
+        or a
+        jr z, da_no
+        xor a
+        ld (ducking), a
+        ret
+da_no:
+        ld a, 1
+        or a
+        ret
+
+; Z = x кактуса в окне одного прыжка для текущей скорости и типа ix+2.
+; HL = x. IX сохраняется.
+cactus_window:
+        push hl
+        push ix
+        ld a, (speed)
+        sub 2
+        ld c, a
+        add a, a
+        add a, c
+        ld c, a
+        ld a, (ix+2)
+        dec a
+        add a, c
+        add a, a
+        ld e, a
+        ld d, 0
+        ld hl, jump_tbl
+        add hl, de
+        ld c, (hl)
+        inc hl
+        ld b, (hl)
+        pop ix
+        pop hl
+        ld a, c
+        inc a
+        ld e, a
+        ld d, 0
+        call signed_lt
+        jr c, cw_low
+        or 1
+        ret
+cw_low:
+        ld a, b
+        ld e, a
+        ld d, 0
+        call signed_lt
+        jr c, cw_out
+        xor a
+        ret
+cw_out:
+        or 1
+        ret
+
+; Z = B <= x <= C. HL = x, IX сохраняются.
+x_between:
+        ld a, c
+        inc a
+        ld e, a
+        ld d, 0
+        call signed_lt
+        jr c, xb_lo
+        or 1
+        ret
+xb_lo:
+        ld e, b
+        ld d, 0
+        call signed_lt
+        jr c, xb_out
+        xor a
+        ret
+xb_out:
+        or 1
+        ret
+
 update_dino:
         ld a, (dino_y)
         cp DINO_Y0
@@ -126,7 +416,21 @@ update_dino:
         ld (dino_y), a
         xor a
         ld (dino_vy), a
+        ld (ducking), a
+        ld a, (demo)
+        or a
+        jr z, ud_human
+        call demo_act
+        jr ud_gate
+ud_human:
+        call read_duck
+        jr nz, ud_key
+        ld a, 1
+        ld (ducking), a
+        ret
+ud_key:
         call read_jump
+ud_gate:
         ret nz
         ld a, -6
         ld (dino_vy), a
@@ -194,23 +498,320 @@ uo_next:
         djnz uo_loop
         ret
 
+; Четыре слота по 6 байт: x, y, старый x, старый y.
+; y = 0 — слот пуст. На экране обычно 2, 3 или 4 облака.
 update_clouds:
-        ld hl, (cloud1_x)
+        ld ix, clouds
+        ld b, CLOUD_N
+uc_loop:
+        push bc
+        ld l, (ix+0)
+        ld h, (ix+1)
         dec hl
-        ld de, -40
+        ld de, -16
         call signed_lt
-        jr nc, uc1_keep
-        ld hl, 280
-uc1_keep:
-        ld (cloud1_x), hl
-        ld hl, (cloud2_x)
+        jr nc, uc_keep
+        call cloud_respawn
+        jr uc_next
+uc_keep:
+        ld (ix+0), l
+        ld (ix+1), h
+uc_next:
+        ld de, 6
+        add ix, de
+        pop bc
+        djnz uc_loop
+        ret
+
+; Ушедшее влево облако появляется справа: дальше от уже видимых,
+; и на свободной высоте. Если видимых меньше двух — сразу с правого края.
+cloud_respawn:
+        push ix
+        pop hl
+        ld (cloud_self), hl
+        call cloud_count_vis
+        cp 2
+        jr c, cr_enter
+        call cloud_right_vis
+        ld b, 5
+cr_try:
+        push bc
+        call cloud_rnd
+        and 63
+        add a, 56
+        ld e, a
+        ld d, 0
+        ld hl, (cloud_max)
+        add hl, de
+        call cloud_clear_of
+        pop bc
+        jr z, cr_y
+        djnz cr_try
+        ld hl, (cloud_max)
+        ld de, 96
+        add hl, de
+        jr cr_y
+cr_enter:
+        ld hl, 224
+        call cloud_clear_of
+        jr z, cr_y
+        ld hl, 156
+        call cloud_clear_of
+        jr z, cr_y
+        ld hl, 88
+        call cloud_clear_of
+        jr z, cr_y
+        ld hl, 28
+cr_y:
+        ld (ix+0), l
+        ld (ix+1), h
+        call cloud_pick_y
+        ld (ix+2), a
+        ret
+
+; A = сколько других облаков сейчас в кадре. cloud_self задан, IX сохраняется.
+cloud_count_vis:
+        xor a
+        ld (cloud_nvis), a
+        push ix
+        ld ix, clouds
+        ld b, CLOUD_N
+ccv_loop:
+        push bc
+        push ix
+        pop hl
+        ld de, (cloud_self)
+        or a
+        sbc hl, de
+        jr z, ccv_next
+        ld e, (ix+0)
+        ld d, (ix+1)
+        call cloud_visible
+        jr nz, ccv_next
+        ld a, (cloud_nvis)
+        inc a
+        ld (cloud_nvis), a
+ccv_next:
+        ld de, 6
+        add ix, de
+        pop bc
+        djnz ccv_loop
+        pop ix
+        ld a, (cloud_nvis)
+        ret
+
+; HL = самый правый другой видимый x. Результат ещё и в cloud_max.
+cloud_right_vis:
+        ld hl, 0
+        ld (cloud_max), hl
+        push ix
+        ld ix, clouds
+        ld b, CLOUD_N
+crv_loop:
+        push bc
+        push ix
+        pop hl
+        ld de, (cloud_self)
+        or a
+        sbc hl, de
+        jr z, crv_next
+        ld e, (ix+0)
+        ld d, (ix+1)
+        call cloud_visible
+        jr nz, crv_next
+        ld l, e
+        ld h, d
+        ld de, (cloud_max)
+        call signed_lt
+        jr c, crv_next
+        ld (cloud_max), hl
+crv_next:
+        ld de, 6
+        add ix, de
+        pop bc
+        djnz crv_loop
+        pop ix
+        ld hl, (cloud_max)
+        ret
+
+; Z = -16 <= DE < 256.
+cloud_visible:
+        ld a, d
+        or a
+        jr z, cv_yes
+        cp $FF
+        jr nz, cv_no
+        ld a, e
+        cp $F0
+        jr c, cv_no
+cv_yes:
+        xor a
+        ret
+cv_no:
+        or 1
+        ret
+
+; Z = HL не ближе 56 пикселей к чужому облаку. IX и HL сохраняются.
+cloud_clear_of:
+        ld (cloud_try), hl
+        ld hl, clouds
+        ld b, CLOUD_N
+cco_loop:
+        push bc
+        ld de, (cloud_self)
+        ld a, l
+        cp e
+        jr nz, cco_cmp
+        ld a, h
+        cp d
+        jr z, cco_next
+cco_cmp:
+        ld e, (hl)
+        inc hl
+        ld d, (hl)
         dec hl
-        ld de, -40
-        call signed_lt
-        jr nc, uc2_keep
-        ld hl, 300
-uc2_keep:
-        ld (cloud2_x), hl
+        push hl
+        ld hl, (cloud_try)
+        or a
+        sbc hl, de
+        jr nc, cco_abs
+        ld a, h
+        cpl
+        ld h, a
+        ld a, l
+        cpl
+        ld l, a
+        inc hl
+cco_abs:
+        ld a, h
+        or a
+        jr nz, cco_far
+        ld a, l
+        cp 56
+        jr c, cco_hit
+cco_far:
+        pop hl
+        jr cco_next
+cco_hit:
+        pop hl
+        pop bc
+        ld hl, (cloud_try)
+        or 1
+        ret
+cco_next:
+        ld de, 6
+        add hl, de
+        pop bc
+        djnz cco_loop
+        ld hl, (cloud_try)
+        xor a
+        ret
+
+; A = свободная высота. Текущие y слотов не повторяются.
+cloud_pick_y:
+        ld b, 16
+cpy_loop:
+        call cloud_rnd
+        and 7
+        cp 5
+        jr c, cpy_lane
+        djnz cpy_loop
+        xor a
+cpy_lane:
+        ld e, a
+        ld d, 0
+        ld hl, cloud_ys
+        add hl, de
+        ld c, (hl)
+        ld hl, clouds+2
+        ld e, CLOUD_N
+cpy_scan:
+        ld a, (hl)
+        cp c
+        jr z, cpy_busy
+        ld a, l
+        add a, 6
+        ld l, a
+        jr nc, cpy_nh
+        inc h
+cpy_nh:
+        dec e
+        jr nz, cpy_scan
+        ld a, c
+        ret
+cpy_busy:
+        djnz cpy_loop
+        ld a, c
+        ret
+
+; Свой счётчик, чтобы облака не сдвигали последовательность препятствий.
+cloud_rnd:
+        push bc
+        push de
+        push hl
+        ld hl, (seed)
+        push hl
+        ld hl, (cloud_seed)
+        ld (seed), hl
+        call rnd
+        ld hl, (seed)
+        ld (cloud_seed), hl
+        pop hl
+        ld (seed), hl
+        pop hl
+        pop de
+        pop bc
+        ret
+
+; Раскладки: 2, 3 или 4 облака в кадре, остальные ждут справа.
+init_clouds:
+        ld hl, clouds
+        ld de, clouds+1
+        ld bc, CLOUD_N*6-1
+        ld (hl), 0
+        ldir
+        call cloud_rnd
+        and 7
+        cp 6
+        jr c, ic_lay
+        xor a
+ic_lay:
+        add a, a
+        add a, a
+        add a, a
+        ld e, a
+        ld d, 0
+        ld hl, cloud_layouts
+        add hl, de
+        ld ix, clouds
+        ld b, CLOUD_N
+ic_loop:
+        push bc
+        ld e, (hl)
+        inc hl
+        ld d, (hl)
+        inc hl
+        push hl
+        call cloud_rnd
+        and 15
+        sub 8
+        ld l, a
+        add a, a
+        sbc a, a
+        ld h, a
+        add hl, de
+        ld (ix+0), l
+        ld (ix+1), h
+        ld (ix+3), l
+        ld (ix+4), h
+        call cloud_pick_y
+        ld (ix+2), a
+        ld (ix+5), a
+        ld de, 6
+        add ix, de
+        pop hl
+        pop bc
+        djnz ic_loop
         ret
 
 ; Один проход на speed бит. Бит камешка — с вероятностью 1/16.
@@ -263,8 +864,11 @@ sp_ml:
         jp c, sp_sh2
         jp z, sp_sh3
         cp 5
+        jp c, sp_sh4
         jp z, sp_sh5
-        jp sp_sh4
+        cp 7
+        jp c, sp_sh6
+        jp sp_sh7
 
 sp_sh2:
         ld hl, pebbles+31
@@ -356,6 +960,64 @@ sp_sh5l:
         ld c, d
         dec hl
         djnz sp_sh5l
+        ret
+
+sp_sh6:
+        ld hl, pebbles+31
+        ld b, 32
+sp_sh6l:
+        ld a, (hl)
+        ld e, a
+        rlca
+        rlca
+        rlca
+        rlca
+        rlca
+        rlca
+        and 63
+        ld d, a
+        ld a, e
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        or c
+        ld (hl), a
+        ld c, d
+        dec hl
+        djnz sp_sh6l
+        ret
+
+sp_sh7:
+        ld hl, pebbles+31
+        ld b, 32
+sp_sh7l:
+        ld a, (hl)
+        ld e, a
+        rlca
+        rlca
+        rlca
+        rlca
+        rlca
+        rlca
+        rlca
+        and 127
+        ld d, a
+        ld a, e
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        add a, a
+        or c
+        ld (hl), a
+        ld c, d
+        dec hl
+        djnz sp_sh7l
         ret
 
 try_spawn:
@@ -569,9 +1231,9 @@ maybe_ding:
 
 update_speed:
         ld a, (score+1)
-        cp 3
+        cp 5
         jr c, usp_ok
-        ld a, 3
+        ld a, 5
 usp_ok:
         add a, 2
         ld (speed), a
@@ -617,6 +1279,10 @@ die:
         ld (state), a
         xor a
         ld (released), a
+        ld (ducking), a
+        ld (idle_t), a
+        ld (idle_t+1), a
+        ld (demo_dead), a
         ld hl, (score)
         ld de, (hi_score)
         or a
@@ -640,10 +1306,20 @@ dino_hitbox:
         ld (ax), hl
         ld a, 7
         ld (aw), a
+        ld a, (ducking)
+        or a
+        jr z, dh_stand
         ld a, (dino_y)
-        add a, 6
+        add a, 10
         ld (ay), a
-        ld a, 10
+        ld a, 7
+        ld (ah), a
+        ret
+dh_stand:
+        ld a, (dino_y)
+        add a, 1
+        ld (ay), a
+        ld a, 16
         ld (ah), a
         ret
 
@@ -904,24 +1580,24 @@ early_clouds:
         ld a, (need_cls)
         or a
         ret nz
-        ld a, (state)
-        cp STATE_RUN
-        jr nz, ec_static
         call update_clouds
-        jp paint_clouds
-ec_static:
-        ld a, (cloud_dirty)
-        or a
-        ret z
         jp paint_clouds
 
 paint_clouds:
         call erase_clouds
         call draw_clouds
-        ld hl, (cloud1_x)
-        ld (cloud1_old), hl
-        ld hl, (cloud2_x)
-        ld (cloud2_old), hl
+        ld ix, clouds
+        ld b, CLOUD_N
+pc_old:
+        ld a, (ix+0)
+        ld (ix+3), a
+        ld a, (ix+1)
+        ld (ix+4), a
+        ld a, (ix+2)
+        ld (ix+5), a
+        ld de, 6
+        add ix, de
+        djnz pc_old
         xor a
         ld (cloud_dirty), a
         ret
@@ -1038,12 +1714,21 @@ eo_next:
         ret
 
 erase_clouds:
-        ld hl, (cloud1_old)
-        ld a, CLOUD1_Y
+        ld ix, clouds
+        ld b, CLOUD_N
+erc_loop:
+        push bc
+        ld a, (ix+5)
+        or a
+        jr z, erc_next
+        ld l, (ix+3)
+        ld h, (ix+4)
         call erase_cloud
-        ld hl, (cloud2_old)
-        ld a, CLOUD2_Y
-        call erase_cloud
+erc_next:
+        ld de, 6
+        add ix, de
+        pop bc
+        djnz erc_loop
         ret
 
 erase_cloud:
@@ -1136,12 +1821,21 @@ fr_loop:
         ret
 
 draw_clouds:
-        ld hl, (cloud1_x)
-        ld a, CLOUD1_Y
+        ld ix, clouds
+        ld b, CLOUD_N
+drc_loop:
+        push bc
+        ld a, (ix+2)
+        or a
+        jr z, drc_next
+        ld l, (ix+0)
+        ld h, (ix+1)
         call draw_cloud
-        ld hl, (cloud2_x)
-        ld a, CLOUD2_Y
-        call draw_cloud
+drc_next:
+        ld de, 6
+        add ix, de
+        pop bc
+        djnz drc_loop
         ret
 
 draw_cloud:
@@ -1240,6 +1934,18 @@ draw_dino:
         ld a, (dino_y)
         cp DINO_Y0
         jr c, dd_jump
+        ld a, (ducking)
+        or a
+        jr z, dd_legs
+        ld a, (frame)
+        and 8
+        jr z, dd_dk1
+        ld hl, dino_duck2
+        jr dd_go
+dd_dk1:
+        ld hl, dino_duck1
+        jr dd_go
+dd_legs:
         ld a, (frame)
         and 8
         jr z, dd_stand
@@ -1391,50 +2097,77 @@ hud_sc_d:
 hud_no_sc:
         ld a, (state)
         cp STATE_RUN
-        jr z, hud_phase_ok
-        ld b, a
-        ld a, (frame)
-        and 16
-        or b
+        jr nz, hud_phase
+        ld a, (demo)
+        or a
+        jr z, hud_run_id
+        ld a, 3
         jr hud_phase
-hud_phase_ok:
+hud_run_id:
         ld a, STATE_RUN
 hud_phase:
         ld hl, hud_msg
         cp (hl)
         ret z
         ld (hl), a
-        ld b, 8
-        ld c, 10
-        call char_addr
-        ld hl, str_blank
+        call hud_clear_msg
         ld a, (state)
         cp STATE_WAIT
-        jr nz, hud_l1b
-        ld a, (frame)
-        and 16
-        jr nz, hud_l1_print
-        ld hl, str_press
-        jr hud_l1_print
-hud_l1b:
+        jp z, hud_legend
         cp STATE_DEAD
-        jr nz, hud_l1_print
+        jp z, hud_dead
+        ld a, (demo)
+        or a
+        ret z
+        ld b, 8
+        ld c, 14
+        call char_addr
+        ld hl, str_demo
+        jp print_str
+
+hud_legend:
+        ld b, 8
+        ld c, 8
+        call char_addr
+        ld hl, str_jump
+        call print_str
+        ld b, 9
+        ld c, 12
+        call char_addr
+        ld hl, str_duck
+        call print_str
+        ld b, 10
+        ld c, 8
+        call char_addr
+        ld hl, str_start
+        jp print_str
+
+hud_dead:
+        ld b, 8
+        ld c, 11
+        call char_addr
         ld hl, str_over
-hud_l1_print:
         call print_str
         ld b, 10
         ld c, 10
         call char_addr
-        ld hl, str_blank
-        ld a, (state)
-        cp STATE_DEAD
-        jr nz, hud_l2_print
-        ld a, (frame)
-        and 16
-        jr nz, hud_l2_print
-        ld hl, str_again
-hud_l2_print:
+        ld hl, str_hit
+        jp print_str
+
+; Строки 8..10, колонки 8..22: туда помещаются легенда и GAME OVER.
+hud_clear_msg:
+        ld b, 8
+hcm_loop:
+        push bc
+        ld c, 8
+        call char_addr
+        ld hl, str_wide
         call print_str
+        pop bc
+        inc b
+        ld a, b
+        cp 11
+        jr c, hcm_loop
         ret
 
 commit_positions:
@@ -1454,10 +2187,6 @@ cp_obs:
         ld de, 7
         add ix, de
         djnz cp_obs
-        ld hl, (cloud1_x)
-        ld (cloud1_old), hl
-        ld hl, (cloud2_x)
-        ld (cloud2_old), hl
         ret
 
 ;------------------------------------------------------------
@@ -1927,6 +2656,13 @@ init_game:
         ld (frame), a
         ld (released), a
         ld (death_play), a
+        ld (demo), a
+        ld (ducking), a
+        ld (demo_dead), a
+        ld (idle_t), a
+        ld (idle_t+1), a
+        ld a, 1
+        ld (can_start), a
         ld hl, hi_dig
         ld b, 5
 ig_hi:
@@ -1947,6 +2683,8 @@ init_round:
         ld (speed), a
         ld a, DINO_Y0
         ld (dino_y), a
+        xor a
+        ld (ducking), a
         ld a, 50
         ld (spawn_t), a
         ld a, 1
@@ -1977,12 +2715,7 @@ ir_clr:
         ld (hl), 0
         inc hl
         djnz ir_clr
-        ld hl, 30
-        ld (cloud1_x), hl
-        ld (cloud1_old), hl
-        ld hl, 170
-        ld (cloud2_x), hl
-        ld (cloud2_old), hl
+        call init_clouds
         ld hl, pebble_init
         ld de, pebbles
         ld bc, 32
@@ -1999,17 +2732,26 @@ str_hi:
 str_gap:
         defm "  "
         defb 0
-str_press:
-        defm "PRESS SPACE"
+str_jump:
+        defm "Q, SPACE - JUMP"
+        defb 0
+str_duck:
+        defm "A - DUCK"
+        defb 0
+str_start:
+        defm "START - ANY KEY"
+        defb 0
+str_demo:
+        defm "DEMO"
         defb 0
 str_over:
-        defm " GAME OVER "
+        defm "GAME OVER"
         defb 0
-str_again:
-        defm " HIT SPACE "
+str_hit:
+        defm "HIT ANY KEY"
         defb 0
-str_blank:
-        defm "           "
+str_wide:
+        defm "               "
         defb 0
 str_copy:
         defb 127
@@ -2027,6 +2769,21 @@ pebble_init:
 state:       db 0
 frame:       db 0
 released:    db 0
+demo:        db 0
+ducking:     db 0
+can_start:   db 1
+idle_t:      dw 0
+demo_dead:   db 0
+demo_want:   db 0
+demo_block:  db 0
+; Поздние окна прыжка: верх, низ. Скорость 2..7, типы 1..3.
+jump_tbl:
+        db 76, 62, 72, 62, 70, 62
+        db 100, 46, 94, 52, 94, 46
+        db 120, 48, 112, 56, 116, 48
+        db 145, 50, 135, 60, 140, 50
+        db 166, 52, 154, 64, 160, 52
+        db 192, 52, 178, 66, 185, 52
 death_play:  db 0
 need_cls:    db 1
 cloud_dirty: db 1
@@ -2053,10 +2810,22 @@ first_spawn: db 1
 seed:        dw 12345
 old_dino_x:  dw DINO_X
 old_dino_y:  db DINO_Y0
-cloud1_x:    dw 30
-cloud1_old:  dw 30
-cloud2_x:    dw 170
-cloud2_old:  dw 170
+cloud_self:  dw 0
+cloud_try:   dw 0
+cloud_max:   dw 0
+cloud_nvis:  db 0
+cloud_seed:  dw 54321
+; Высоты не задевают счёт (ряд 0) и надписи (ряды 8 и 10).
+cloud_ys:
+        db 10, 26, 42, 54, 96
+cloud_layouts:
+        dw 18, 176, 330, 470
+        dw 36, 210, 360, 520
+        dw 10, 96, 200, 380
+        dw 28, 130, 230, 420
+        dw 6, 78, 156, 230
+        dw 14, 64, 150, 228
+clouds:      ds CLOUD_N*6
 ; 3 слота по 7 байт: x, тип, старый x, старый тип, шаг птицы.
 obs:         ds 21
 pebbles:     ds 32
