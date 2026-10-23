@@ -1,6 +1,6 @@
 # ZX Dino
 
-A dinosaur runner in the style of the Chrome offline game, for the ZX Spectrum 48K. The game is Z80 assembly. Sprites are ASCII pictures in `art.py`.
+A dinosaur runner in the style of the Chrome offline game, for the ZX Spectrum 48K. The game is Z80 assembly. Sprites are GIF bitmaps in `sprites/`; `art.py` turns them into `sprites.inc`.
 
 ![ZX Dino screen](./zx-dino-screen.png)
 
@@ -64,9 +64,9 @@ You need Python 3 and [z80asm](https://www.nongnu.org/z80asm/) 1.8. On macOS tha
 python3 build.py
 ```
 
-The script rebuilds `sprites.inc` from `art.py`, assembles `dino.asm`, and writes `dino.bin`, `dino.tap`, and `dino.z80`.
+The script rebuilds `sprites.inc` from `sprites/*.gif` via `art.py`, assembles `dino.asm`, and writes `dino.bin`, `dino.tap`, and `dino.z80`.
 
-To change a sprite, edit its picture in `art.py`. Every row of a sprite must be the same width, and the width must be a multiple of 8.
+To change a sprite, edit the matching file in `sprites/` (opaque pixels are ink; width must be a multiple of 8).
 
 The same command can render preview frames. See [Platforms](#platforms) for the C compiler, libz80, and the 48K ROM on each system. The ROM is copyrighted and is not part of this repository. If `48.rom` and `SPECTRUM_ROM` are both unset, the TAP and Z80 images are still written and the preview is skipped.
 
