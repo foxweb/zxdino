@@ -500,14 +500,27 @@ uo_next:
 
 ; Четыре слота по 6 байт: x, y, старый x, старый y.
 ; y = 0 — слот пуст. На экране обычно 2, 3 или 4 облака.
+; Верхние плывут медленно, нижние примерно на 50% быстрее.
 update_clouds:
+        ld hl, cloud_phase
+        inc (hl)
+        ld a, (hl)
+        cp 12
+        jr c, uc_phase
+        xor a
+        ld (hl), a
+uc_phase:
         ld ix, clouds
         ld b, CLOUD_N
 uc_loop:
         push bc
         ld l, (ix+0)
         ld h, (ix+1)
-        dec hl
+        call cloud_step
+        ld e, a
+        ld d, 0
+        or a
+        sbc hl, de
         ld de, -16
         call signed_lt
         jr nc, uc_keep
@@ -521,6 +534,55 @@ uc_next:
         add ix, de
         pop bc
         djnz uc_loop
+        ret
+
+; A = пикселей влево в этом кадре. IX и HL сохраняются.
+; За 12 кадров высоты 10, 26, 42, 54, 96 сдвигаются на 8, 9, 10, 11, 12.
+cloud_step:
+        ld a, (ix+2)
+        cp 26
+        jr z, cs_9
+        jr c, cs_8
+        cp 42
+        jr z, cs_10
+        cp 54
+        jr z, cs_11
+        ld a, 1
+        ret
+cs_8:
+        ld a, (cloud_phase)
+cs_8m:
+        cp 3
+        jr c, cs_8d
+        sub 3
+        jr cs_8m
+cs_8d:
+        or a
+        jr z, cs_zero
+        ld a, 1
+        ret
+cs_9:
+        ld a, (cloud_phase)
+        and 3
+        jr z, cs_zero
+        ld a, 1
+        ret
+cs_10:
+        ld a, (cloud_phase)
+        cp 6
+        jr z, cs_zero
+        or a
+        jr z, cs_zero
+        ld a, 1
+        ret
+cs_11:
+        ld a, (cloud_phase)
+        or a
+        jr z, cs_zero
+        ld a, 1
+        ret
+cs_zero:
+        xor a
         ret
 
 ; Ушедшее влево облако появляется справа: дальше от уже видимых,
@@ -2814,6 +2876,7 @@ cloud_self:  dw 0
 cloud_try:   dw 0
 cloud_max:   dw 0
 cloud_nvis:  db 0
+cloud_phase: db 0
 cloud_seed:  dw 54321
 ; Высоты не задевают счёт (ряд 0) и надписи (ряды 8 и 10).
 cloud_ys:
